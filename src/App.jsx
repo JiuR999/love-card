@@ -20,19 +20,23 @@ const App = () => {
   
   // 基础配置状态
   const [config, setConfig] = useState(() => {
-    const saved = localStorage.getItem('loveCardConfig');
-    return saved ? JSON.parse(saved) : {
-      eventTitle: '养宝宝',
-      anniversaryDate: '2024-01-18',
-      roleAName: '小明',
-      roleBName: '小红',
-      city: '北京',
-      emailHost: 'smtp.qq.com',
-      emailUser: '',
-      emailPass: '',
-      receiveEmail: '',
-      pushTime: '08:00'
-    };
+    try {
+      const saved = localStorage.getItem('loveCardConfig');
+      return saved ? JSON.parse(saved) : {
+        eventTitle: '养宝宝',
+        anniversaryDate: '2024-01-18',
+        roleAName: '小明',
+        roleBName: '小红',
+        city: '北京',
+        emailHost: 'smtp.qq.com',
+        emailUser: '',
+        emailPass: '',
+        receiveEmail: '',
+        pushTime: '08:00'
+      };
+    } catch (e) {
+      return { eventTitle: '恋爱纪念' };
+    }
   });
 
   // 卡片动态数据状态
@@ -98,11 +102,12 @@ const App = () => {
     showToast('配置已保存！');
   };
 
-  // 核心保存函数
+  // 核心保存函数 (修复跨域和保存内容)
   const captureElement = async (element, fileName) => {
     if (!element) return;
     setIsDownloading(true);
     setShowSaveOptions(false);
+    
     try {
       if (!window.html2canvas) {
         const script = document.createElement('script');
@@ -114,12 +119,15 @@ const App = () => {
       }
       
       const canvas = await window.html2canvas(element, { 
-        useCORS: true,       
-        scale: 2,            
+        useCORS: true,           // 开启跨域资源共享
+        allowTaint: false,       // 不允许被污染的画布，这样才能调用 toDataURL
+        scale: 2,                // 高清倍率
         backgroundColor: null, 
         logging: false,
         width: element.offsetWidth,
         height: element.offsetHeight,
+        // 核心修复：排除带有此属性的元素（如底部的保存按钮）
+        ignoreElements: (el) => el.getAttribute('data-html2canvas-ignore') === 'true'
       });
       
       const link = document.createElement('a');
@@ -311,10 +319,9 @@ const App = () => {
                 )}
               </div>
 
-              {/* 底部操作：整合保存逻辑 */}
-              <div className="z-10 flex flex-wrap justify-center gap-4 mt-12">
+              {/* 底部操作：添加了 data-html2canvas-ignore="true" 以在截屏中排除 */}
+              <div className="z-10 flex flex-wrap justify-center gap-4 mt-12" data-html2canvas-ignore="true">
                 
-                {/* 组合式保存按钮 */}
                 <div className="relative inline-flex h-12" ref={dropdownRef}>
                   <button 
                     onClick={() => captureElement(cardRef.current, `卡片-${config.eventTitle}`)}
@@ -332,7 +339,6 @@ const App = () => {
                     <ChevronDown size={14} className={`transition-transform duration-300 ${showSaveOptions ? 'rotate-180' : ''}`} />
                   </button>
 
-                  {/* 下拉菜单 */}
                   {showSaveOptions && (
                     <div className="absolute bottom-full mb-3 right-0 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-100 py-2 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
                       <button 
@@ -354,7 +360,7 @@ const App = () => {
                 </div>
 
                 <button 
-                  onClick={() => showToast('模拟发送成功！')} 
+                  onClick={() => showToast('已模拟发送到邮箱！')} 
                   className="px-8 py-3 bg-rose-500 text-white rounded-full text-sm font-bold flex items-center space-x-2 hover:bg-rose-600 shadow-xl shadow-rose-200 transition active:scale-95"
                 >
                   <Send size={16} />
