@@ -17,10 +17,13 @@ const App = () => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [showSaveOptions, setShowSaveOptions] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isBgLoading, setIsBgLoading] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
   
   // 基础配置状态
   const [config, setConfig] = useState(() => {
     try {
+      // 这里的 localStorage 在预览环境中可用
       const saved = localStorage.getItem('loveCardConfig');
       return saved ? JSON.parse(saved) : {
         eventTitle: '养宝宝',
@@ -35,7 +38,7 @@ const App = () => {
         pushTime: '08:00'
       };
     } catch (e) {
-      return { eventTitle: '恋爱纪念' };
+      return { eventTitle: '恋爱纪念', anniversaryDate: '2024-01-01' };
     }
   });
 
@@ -58,6 +61,7 @@ const App = () => {
 
   const fontOptions = [
     { label: '系统默认', value: 'system-ui, sans-serif' },
+    { label: 'SuperWoobly', value: '"SuperWoobly", serif' },
     { label: '优雅衬线', value: 'Georgia, serif' },
     { label: '硬核黑体', value: '"Arial Black", sans-serif' },
     { label: '现代圆体', value: 'ui-rounded, "Hiragino Sans GB", sans-serif' },
@@ -102,44 +106,36 @@ const App = () => {
     showToast('配置已保存！');
   };
 
-  // 核心保存函数 (修复跨域和保存内容)
+  // 截图保存 (使用 html-to-image 代替 html2canvas)
   const captureElement = async (element, fileName) => {
     if (!element) return;
     setIsDownloading(true);
     setShowSaveOptions(false);
+    setIsCapturing(true); 
     
+    // 给 UI 一点时间完成状态更新（比如隐藏按钮）
+    await new Promise(res => setTimeout(res, 300));
+
     try {
-      if (!window.html2canvas) {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-        await new Promise((resolve) => {
-          script.onload = resolve;
-          document.body.appendChild(script);
-        });
-      }
+      // 动态引入现代社区流行的 html-to-image 库
+      const htmlToImage = await import('https://esm.sh/html-to-image');
       
-      const canvas = await window.html2canvas(element, { 
-        useCORS: true,           // 开启跨域资源共享
-        allowTaint: false,       // 不允许被污染的画布，这样才能调用 toDataURL
-        scale: 2,                // 高清倍率
-        backgroundColor: null, 
-        logging: false,
-        width: element.offsetWidth,
-        height: element.offsetHeight,
-        // 核心修复：排除带有此属性的元素（如底部的保存按钮）
-        ignoreElements: (el) => el.getAttribute('data-html2canvas-ignore') === 'true'
+      const dataUrl = await htmlToImage.toPng(element, { 
+        pixelRatio: 2, // 提高导出清晰度 (支持视网膜屏幕标准)
+        backgroundColor: 'transparent',
       });
       
       const link = document.createElement('a');
       link.download = `${fileName}.png`;
-      link.href = canvas.toDataURL('image/png');
+      link.href = dataUrl;
       link.click();
       showToast('图片已保存');
     } catch (err) {
-      console.error(err);
-      showToast('保存失败，请检查网络或图片权限');
+      console.error('html-to-image error:', err);
+      showToast('保存失败，请检查网络或尝试更换背景');
     } finally {
       setIsDownloading(false);
+      setIsCapturing(false);
     }
   };
 
@@ -151,7 +147,7 @@ const App = () => {
       setCardData(prev => ({ ...prev, hitokoto: data.hitokoto, contentType: 'standard' }));
       setTimeout(() => setIsRefreshing(false), 500);
     } catch (error) {
-      showToast('获取一言失败');
+      showToast('获取文案失败');
       setIsRefreshing(false);
     }
   };
@@ -167,12 +163,23 @@ const App = () => {
     }
   };
 
-  const refreshBackground = () => {
-    const randomId = Math.floor(Math.random() * 1000);
-    setCardData(prev => ({
-      ...prev,
-      background: `https://picsum.photos/seed/${randomId}/800/1200`
-    }));
+  const refreshBackground = async () => {
+    setIsBgLoading(true);
+    try {
+        const randomId = Math.floor(Math.random() * 1000);
+        const url = `https://picsum.photos/seed/${randomId}/800/1200`;
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setCardData(prev => ({ ...prev, background: reader.result }));
+            setIsBgLoading(false);
+        };
+        reader.readAsDataURL(blob);
+    } catch (error) {
+        setIsBgLoading(false);
+        showToast('获取背景失败');
+    }
   };
 
   return (
@@ -208,15 +215,11 @@ const App = () => {
               ref={fullScreenRef}
               className="flex-1 w-full h-full min-h-[750px] flex flex-col items-center justify-center p-6 md:p-12 relative overflow-hidden"
             >
-              {/* 全局背景图 */}
-              <div 
-                className="absolute inset-0 z-0 transition-all duration-1000 scale-105"
-                style={{ 
-                  backgroundImage: `url(${cardData.background})`,
-                  backgroundPosition: 'center',
-                  backgroundSize: 'cover',
-                  filter: 'brightness(0.85)'
-                }}
+              <img 
+                src={cardData.background}
+                className="absolute inset-0 z-0 w-full h-full object-cover transition-all duration-1000 scale-105"
+                style={{ filter: 'brightness(0.85)' }}
+                alt="bg"
               />
               <div className="absolute inset-0 z-1 bg-black/10 backdrop-blur-[2px]"></div>
 
@@ -225,7 +228,7 @@ const App = () => {
                 ref={cardRef} 
                 className="z-10 w-full max-w-[380px] aspect-[1/1.3] rounded-[48px] shadow-2xl overflow-hidden flex flex-col relative transition-all duration-500 transform-gpu"
               >
-                {cardData.style === 'glass' && (
+                {cardData.style === 'glass' ? (
                   <div className="w-full h-full flex flex-col items-center text-center p-8 relative">
                     <div className="absolute inset-0 z-0"
                       style={{ 
@@ -272,12 +275,10 @@ const App = () => {
                       </div>
                     </div>
                   </div>
-                )}
-
-                {cardData.style === 'split' && (
+                ) : (
                   <div className="w-full h-full flex flex-col bg-white">
                     <div className="relative h-[55%] w-full overflow-hidden">
-                      <img crossOrigin="anonymous" src={cardData.background} className="w-full h-full object-cover" alt="Background" />
+                      <img src={cardData.background} className="w-full h-full object-cover" alt="Background" />
                       <div className="absolute top-6 right-6 bg-white/80 backdrop-blur-md px-4 py-1.5 rounded-full flex items-center space-x-2 shadow-sm border border-white/50 z-20">
                         <Cloud size={14} className="text-blue-400" />
                         <span className="text-[10px] font-bold text-gray-600 tracking-tight">{config.city} • {cardData.weather}</span>
@@ -319,60 +320,59 @@ const App = () => {
                 )}
               </div>
 
-              {/* 底部操作：添加了 data-html2canvas-ignore="true" 以在截屏中排除 */}
-              <div className="z-10 flex flex-wrap justify-center gap-4 mt-12" data-html2canvas-ignore="true">
-                
-                <div className="relative inline-flex h-12" ref={dropdownRef}>
-                  <button 
-                    onClick={() => captureElement(cardRef.current, `卡片-${config.eventTitle}`)}
-                    className="pl-6 pr-4 bg-white/90 backdrop-blur-md border border-gray-200 rounded-l-full text-xs font-bold flex items-center space-x-2 hover:bg-white transition shadow-lg active:scale-95 disabled:opacity-50"
-                    disabled={isDownloading}
-                  >
-                    {isDownloading ? <RefreshCw className="animate-spin" size={14}/> : <Download size={14} />}
-                    <span>保存卡片</span>
-                  </button>
-                  <div className="w-[1px] bg-gray-200 h-full self-stretch" />
-                  <button 
-                    onClick={() => setShowSaveOptions(!showSaveOptions)}
-                    className="px-3 bg-white/90 backdrop-blur-md border border-gray-200 rounded-r-full hover:bg-white transition shadow-lg active:scale-95 border-l-0"
-                  >
-                    <ChevronDown size={14} className={`transition-transform duration-300 ${showSaveOptions ? 'rotate-180' : ''}`} />
-                  </button>
+              {!isCapturing && (
+                <div className="z-10 flex flex-wrap justify-center gap-4 mt-12">
+                  <div className="relative inline-flex h-12" ref={dropdownRef}>
+                    <button 
+                      onClick={() => captureElement(cardRef.current, `卡片-${config.eventTitle}`)}
+                      className="pl-6 pr-4 bg-white/90 backdrop-blur-md border border-gray-200 rounded-l-full text-xs font-bold flex items-center space-x-2 hover:bg-white transition shadow-lg active:scale-95 disabled:opacity-50"
+                      disabled={isDownloading}
+                    >
+                      {isDownloading ? <RefreshCw className="animate-spin" size={14}/> : <Download size={14} />}
+                      <span>保存卡片</span>
+                    </button>
+                    <div className="w-[1px] bg-gray-200 h-full self-stretch" />
+                    <button 
+                      onClick={() => setShowSaveOptions(!showSaveOptions)}
+                      className="px-3 bg-white/90 backdrop-blur-md border border-gray-200 rounded-r-full hover:bg-white transition shadow-lg active:scale-95 border-l-0"
+                    >
+                      <ChevronDown size={14} className={`transition-transform duration-300 ${showSaveOptions ? 'rotate-180' : ''}`} />
+                    </button>
 
-                  {showSaveOptions && (
-                    <div className="absolute bottom-full mb-3 right-0 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-100 py-2 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-                      <button 
-                        onClick={() => captureElement(cardRef.current, `卡片-${config.eventTitle}`)}
-                        className="w-full px-4 py-3 flex items-center space-x-3 text-left hover:bg-rose-50 group transition"
-                      >
-                        <ImageIcon size={14} className="text-gray-400 group-hover:text-rose-500" />
-                        <span className="text-xs font-bold text-gray-600 group-hover:text-rose-600">仅保存单张卡片</span>
-                      </button>
-                      <button 
-                        onClick={() => captureElement(fullScreenRef.current, `全屏纪念-${config.eventTitle}`)}
-                        className="w-full px-4 py-3 flex items-center space-x-3 text-left hover:bg-rose-50 group transition border-t border-gray-50"
-                      >
-                        <Monitor size={14} className="text-gray-400 group-hover:text-rose-500" />
-                        <span className="text-xs font-bold text-gray-600 group-hover:text-rose-600">保存全屏 (含背景)</span>
-                      </button>
-                    </div>
-                  )}
+                    {showSaveOptions && (
+                      <div className="absolute bottom-full mb-3 right-0 w-48 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-100 py-2 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <button 
+                          onClick={() => captureElement(cardRef.current, `卡片-${config.eventTitle}`)}
+                          className="w-full px-4 py-3 flex items-center space-x-3 text-left hover:bg-rose-50 group transition"
+                        >
+                          <ImageIcon size={14} className="text-gray-400 group-hover:text-rose-500" />
+                          <span className="text-xs font-bold text-gray-600 group-hover:text-rose-600">仅保存单张卡片</span>
+                        </button>
+                        <button 
+                          onClick={() => captureElement(fullScreenRef.current, `全屏纪念-${config.eventTitle}`)}
+                          className="w-full px-4 py-3 flex items-center space-x-3 text-left hover:bg-rose-50 group transition border-t border-gray-50"
+                        >
+                          <Monitor size={14} className="text-gray-400 group-hover:text-rose-500" />
+                          <span className="text-xs font-bold text-gray-600 group-hover:text-rose-600">保存全屏 (含背景)</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <button 
+                    onClick={() => showToast('发送功能已成功模拟！')} 
+                    className="px-8 py-3 bg-rose-500 text-white rounded-full text-sm font-bold flex items-center space-x-2 hover:bg-rose-600 shadow-xl shadow-rose-200 transition active:scale-95"
+                  >
+                    <Send size={16} />
+                    <span>立即发送给 TA</span>
+                  </button>
                 </div>
-
-                <button 
-                  onClick={() => showToast('已模拟发送到邮箱！')} 
-                  className="px-8 py-3 bg-rose-500 text-white rounded-full text-sm font-bold flex items-center space-x-2 hover:bg-rose-600 shadow-xl shadow-rose-200 transition active:scale-95"
-                >
-                  <Send size={16} />
-                  <span>立即发送给 TA</span>
-                </button>
-              </div>
+              )}
             </div>
 
             {/* 右侧：属性控制面板 */}
             <div className="w-full xl:w-[480px] bg-white border-l border-gray-100 p-8 overflow-y-auto min-h-screen">
               <div className="max-w-md mx-auto space-y-8 pb-12">
-                
                 <section>
                   <h3 className="text-sm font-bold mb-4 flex items-center text-gray-700"><Layers size={16} className="mr-2 text-rose-500"/> 视觉模板</h3>
                   <div className="flex bg-gray-100 p-1.5 rounded-2xl">
@@ -398,7 +398,6 @@ const App = () => {
                                         style={{ 
                                             fontFamily: font.value, 
                                             color: cardData.daysColor,
-                                            textShadow: cardData.daysShadow ? `0 2px 6px ${cardData.daysColor}30` : 'none',
                                             fontWeight: cardData.daysWeight 
                                         }}
                                         className="text-3xl leading-none mb-1"
@@ -406,11 +405,6 @@ const App = () => {
                                         {cardData.days}
                                     </div>
                                     <span className="text-[9px] text-gray-400 font-medium truncate w-full text-center px-2">{font.label}</span>
-                                    {cardData.daysFont === font.value && (
-                                        <div className="absolute top-2 right-2">
-                                            <CheckCircle size={14} className="text-rose-500 fill-white" />
-                                        </div>
-                                    )}
                                 </button>
                             ))}
                         </div>
@@ -436,13 +430,6 @@ const App = () => {
                                 />
                             </div>
                         </div>
-                        <button 
-                            onClick={() => setCardData({...cardData, daysShadow: !cardData.daysShadow})}
-                            className={`p-4 rounded-2xl transition-all border flex items-center justify-center ${cardData.daysShadow ? 'bg-rose-500 text-white border-rose-400 shadow-lg shadow-rose-200' : 'bg-white text-gray-400 border-gray-100 hover:bg-gray-50'}`}
-                            title="文字阴影"
-                        >
-                            <Layers size={20} />
-                        </button>
                     </div>
                   </div>
                 </section>
@@ -471,8 +458,9 @@ const App = () => {
                           <Upload size={18} className="mr-2 text-gray-400 group-hover:text-rose-500 transition" />
                           <span className="text-xs text-gray-500 group-hover:text-rose-600 font-medium">上传本地图片</span>
                       </label>
-                      <button onClick={refreshBackground} className="w-full py-4 bg-white border border-gray-100 text-gray-600 text-[11px] rounded-2xl hover:bg-gray-50 font-bold transition flex items-center justify-center active:scale-[0.98]">
-                          <RefreshCw size={14} className="mr-2 text-rose-500"/> 换一张网络图片
+                      <button onClick={refreshBackground} disabled={isBgLoading} className="w-full py-4 bg-white border border-gray-100 text-gray-600 text-[11px] rounded-2xl hover:bg-gray-50 font-bold transition flex items-center justify-center active:scale-[0.98] disabled:opacity-50">
+                          <RefreshCw size={14} className={`mr-2 text-rose-500 ${isBgLoading ? 'animate-spin' : ''}`}/> 
+                          {isBgLoading ? '正在加载高清底图...' : '换一张网络图片'}
                       </button>
                   </div>
                 </section>
@@ -496,18 +484,12 @@ const App = () => {
                           onClick={fetchHitokoto}
                           disabled={isRefreshing}
                           className="absolute bottom-3 right-3 p-2 text-rose-500 hover:text-rose-600 transition-all duration-300 disabled:opacity-30 disabled:cursor-not-allowed group/magic"
-                          title="换一句心里话"
                         >
-                          <Wand2 
-                            size={20} 
-                            className={`transition-all duration-500 ${isRefreshing ? 'rotate-[360deg] scale-125' : 'group-hover/magic:scale-110 group-hover/magic:rotate-12'}`}
-                          />
+                          <Wand2 size={20} className={`${isRefreshing ? 'animate-spin' : ''}`} />
                         </button>
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        <textarea className="w-full h-32 p-4 bg-slate-900 text-rose-200 font-mono rounded-2xl text-[10px] outline-none resize-none shadow-2xl border-2 border-slate-800" value={cardData.customHtml} onChange={(e) => setCardData({...cardData, customHtml: e.target.value})} />
-                      </div>
+                      <textarea className="w-full h-32 p-4 bg-slate-900 text-rose-200 font-mono rounded-2xl text-[10px] outline-none resize-none" value={cardData.customHtml} onChange={(e) => setCardData({...cardData, customHtml: e.target.value})} />
                     )}
                   </div>
                 </section>
@@ -521,30 +503,12 @@ const App = () => {
           <div className="max-w-2xl mx-auto py-12 px-6 space-y-8">
             <h2 className="text-xl font-black tracking-tight flex items-center"><Settings className="mr-2 text-rose-500" /> 全局基础配置</h2>
             <div className="bg-white rounded-[48px] p-10 shadow-sm border border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-              <div className="md:col-span-2 border-b border-gray-50 pb-4 mb-2">
-                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center">
-                  <CalendarHeart size={14} className="mr-2" /> 纪念日信息
-                </h4>
-              </div>
               <FormInput label="纪念标题" value={config.eventTitle} onChange={e => setConfig({...config, eventTitle: e.target.value})} />
               <FormInput label="起始日期" type="date" value={config.anniversaryDate} onChange={e => setConfig({...config, anniversaryDate: e.target.value})} />
               <FormInput label="你的称呼" icon={<User size={14}/>} value={config.roleAName} onChange={e => setConfig({...config, roleAName: e.target.value})} />
               <FormInput label="TA的称呼" icon={<User size={14}/>} value={config.roleBName} onChange={e => setConfig({...config, roleBName: e.target.value})} />
               <FormInput label="相识城市" icon={<Cloud size={14}/>} value={config.city} onChange={e => setConfig({...config, city: e.target.value})} />
               
-              <div className="md:col-span-2 border-b border-gray-50 pb-4 mt-6 mb-2">
-                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center">
-                  <Mail size={14} className="mr-2" /> 自动化推送 (SMTP)
-                </h4>
-              </div>
-              <FormInput label="推送时间" type="time" value={config.pushTime} onChange={e => setConfig({...config, pushTime: e.target.value})} />
-              <FormInput label="SMTP 服务" placeholder="如 smtp.qq.com" value={config.emailHost} onChange={e => setConfig({...config, emailHost: e.target.value})} />
-              <FormInput label="发件账号" icon={<Mail size={14}/>} value={config.emailUser} onChange={e => setConfig({...config, emailUser: e.target.value})} />
-              <FormInput label="发件授权码" icon={<Lock size={14}/>} type="password" value={config.emailPass} onChange={e => setConfig({...config, emailPass: e.target.value})} />
-              <div className="md:col-span-2">
-                <FormInput label="接收邮箱 (多个地址用逗号)" value={config.receiveEmail} onChange={e => setConfig({...config, receiveEmail: e.target.value})} />
-              </div>
-
               <div className="md:col-span-2 pt-8">
                 <button onClick={handleSaveConfig} className="w-full py-5 bg-rose-500 text-white rounded-[24px] font-bold hover:bg-rose-600 transition flex items-center justify-center space-x-2 shadow-xl shadow-rose-100 active:scale-[0.98]">
                   <Save size={18} />
